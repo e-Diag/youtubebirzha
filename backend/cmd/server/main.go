@@ -66,14 +66,28 @@ func setupRouter() *gin.Engine {
 	r.Static("/static", "./static")
 	r.Static("/assets", "./static/assets")
 	r.GET("/", func(c *gin.Context) {
+		// Проверяем существование файла перед отправкой
+		if _, err := os.Stat("./static/index.html"); os.IsNotExist(err) {
+			log.Printf("Warning: static/index.html not found, serving 404")
+			c.JSON(404, gin.H{"error": "index.html not found"})
+			return
+		}
 		c.File("./static/index.html")
 	})
 
 	// Legal pages
 	r.GET("/terms", func(c *gin.Context) {
+		if _, err := os.Stat("./static/terms.html"); os.IsNotExist(err) {
+			c.JSON(404, gin.H{"error": "terms.html not found"})
+			return
+		}
 		c.File("./static/terms.html")
 	})
 	r.GET("/privacy", func(c *gin.Context) {
+		if _, err := os.Stat("./static/privacy.html"); os.IsNotExist(err) {
+			c.JSON(404, gin.H{"error": "privacy.html not found"})
+			return
+		}
 		c.File("./static/privacy.html")
 	})
 
