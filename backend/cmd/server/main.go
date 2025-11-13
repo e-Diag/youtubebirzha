@@ -5,20 +5,30 @@ import (
 	"os"
 	"youtube-market/internal/db"
 	"youtube-market/internal/handlers"
+	"youtube-market/internal/middleware"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
-		log.Println("Warning: .env file not found, using environment variables")
+		// В контейнере .env может отсутствовать — переменные окружения передаются напрямую.
+		if !os.IsNotExist(err) {
+			log.Printf("Warning: could not load .env file: %v", err)
+		}
 	}
 
 	// Initialize database
 	if err := db.Init(); err != nil {
 		log.Fatal("Failed to initialize database:", err)
+	}
+
+	// Initialize Redis for rate limiting
+	if err := middleware.InitRedis(); err != nil {
+		log.Printf("Warning: Redis not available, rate limiting disabled: %v", err)
 	}
 
 	// Setup router
@@ -47,44 +57,45 @@ func setupRouter() *gin.Engine {
 
 	r := gin.Default()
 
-	// CORS middleware
-	r.Use(corsMiddleware())
+	// Global middleware
+	r.Use(middleware.SafeLoggerMiddleware())
+	r.Use(middleware.CORSMiddleware())
+	r.Use(middleware.RateLimitMiddleware())
 
 	// Static files
 	r.Static("/static", "./static")
+	r.Static("/assets", "./static/assets")
 	r.GET("/", func(c *gin.Context) {
 		c.File("./static/index.html")
 	})
 
-	// API routes
-	api := r.Group("/api")
-	{
-		api.GET("/ads", handlers.GetAds)
-		api.GET("/myads", handlers.GetMyAds)
-		api.GET("/profile/:username", handlers.GetProfileAds)
-		api.GET("/scammer/:username", handlers.CheckScammer)
-	}
+	// Legal pages
+	r.GET("/terms", func(c *gin.Context) {
+		c.File("./static/terms.html")
+	})
+	r.GET("/privacy", func(c *gin.Context) {
+		c.File("./static/privacy.html")
+	})
+
+	// Metrics endpoint (без аутентификации для мониторинга)
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	return r
-}
-
-func corsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
+	// API routes with TMA authentication
+	api := r.Group("/api")
+	api.Use(middleware.TMAuthMiddleware())
+	{
+		api.GET("/ads", handlers.GetAds)
+		api.GET("/ads/:id/photo", handlers.GetAdPhoto)
+		api.GET("/myads", handlers.GetMyAds)
+		api.GET("/profile/:username", handlers.GetProfileAds)
+		api.GET("/scammer/:username", handlers.CheckScammer)
+		api.GET("/blacklist", handlers.GetBlacklist)
 	}
+
+	return r
 }

@@ -3,6 +3,7 @@ import { Shield, List, User } from 'lucide-react';
 import { BlacklistTab } from './components/BlacklistTab';
 import { ListingsTab } from './components/ListingsTab';
 import { ProfileTab } from './components/ProfileTab';
+import { isTelegramWebApp } from './utils/telegram';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'blacklist' | 'listings' | 'profile'>('listings');

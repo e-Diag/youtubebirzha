@@ -1,20 +1,11 @@
 import { useState, useEffect } from 'react';
-import { ListingCard } from './ListingCard';
+import { ListingCard, type ListingCardData } from './ListingCard';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import { Button } from './ui/button';
 import { FilterScroll } from './FilterScroll';
+import { apiFetch } from '../utils/telegram';
 
 type MainCategory = 'services' | 'buysell' | 'other';
-
-interface Listing {
-  id: number;
-  image: string;
-  title: string;
-  description: string;
-  username: string;
-  isPremium: boolean;
-  category: string;
-}
 
 export function ListingsTab() {
   const [mainCategory, setMainCategory] = useState<MainCategory>('services');
@@ -23,53 +14,64 @@ export function ListingsTab() {
   const [buysellFilter, setBuysellFilter] = useState<string>('sell');
   const [buysellType, setBuysellType] = useState<string>('all');
   const [otherType, setOtherType] = useState<string>('all');
-  const [listings, setListings] = useState<Listing[]>([]);
+  const [listings, setListings] = useState<ListingCardData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchListings();
-  }, [mainCategory, serviceType, buysellType, otherType]);
+  }, [mainCategory, serviceFilter, serviceType, buysellFilter, buysellType, otherType]);
 
   const fetchListings = async () => {
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams();
       params.set('cat', mainCategory);
-      
+
       if (mainCategory === 'services' && serviceType !== 'all') {
-        params.set('f1', serviceType);
+        params.set('tag', serviceType);
       } else if (mainCategory === 'buysell' && buysellType !== 'all') {
-        params.set('f1', buysellType);
+        params.set('tag', buysellType);
       } else if (mainCategory === 'other' && otherType !== 'all') {
-        params.set('f1', otherType);
+        params.set('tag', otherType);
       }
 
-      const response = await fetch(`/api/ads?${params.toString()}`);
+      if (mainCategory === 'services') {
+        params.set('mode', serviceFilter);
+      }
+      if (mainCategory === 'buysell') {
+        params.set('mode', buysellFilter);
+      }
+
+      const response = await apiFetch(`/api/ads?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error('Ошибка загрузки объявлений');
+      }
       const data = await response.json();
-      
-      // Transform API response to match Listing interface
-      const transformedListings = data.map((ad: any) => ({
+
+      const transformedListings: ListingCardData[] = data.map((ad: any) => ({
         id: ad.id,
-        image: ad.photo_id || 'https://via.placeholder.com/800x450?text=No+Image',
         title: ad.title,
         description: ad.desc,
         username: `@${ad.username}`,
         isPremium: ad.is_premium,
         category: ad.category,
+        mode: ad.mode,
+        tag: ad.tag,
+        status: ad.status,
+        expiresAt: ad.expires_at,
+        photoUrl: ad.photo_url ?? null,
       }));
-      
       setListings(transformedListings);
     } catch (error) {
       console.error('Failed to fetch listings:', error);
+      setError('Не удалось загрузить объявления. Попробуйте обновить позже.');
       setListings([]);
     } finally {
       setLoading(false);
     }
   };
-
-  const filteredListings = listings
-    .filter((listing) => listing.category === mainCategory)
-    .sort((a, b) => (b.isPremium ? 1 : 0) - (a.isPremium ? 1 : 0));
 
   return (
     <div className="pb-4">
@@ -111,7 +113,10 @@ export function ListingsTab() {
           <>
             <div className="flex gap-2">
               <Button
-                onClick={() => setServiceFilter('offer')}
+                onClick={() => {
+                  setServiceFilter('offer');
+                  setServiceType('all');
+                }}
                 variant={serviceFilter === 'offer' ? 'default' : 'outline'}
                 className={`rounded-full whitespace-nowrap ${
                   serviceFilter === 'offer'
@@ -122,7 +127,10 @@ export function ListingsTab() {
                 Предлагаю услугу
               </Button>
               <Button
-                onClick={() => setServiceFilter('search')}
+                onClick={() => {
+                  setServiceFilter('search');
+                  setServiceType('all');
+                }}
                 variant={serviceFilter === 'search' ? 'default' : 'outline'}
                 className={`rounded-full whitespace-nowrap ${
                   serviceFilter === 'search'
@@ -202,7 +210,10 @@ export function ListingsTab() {
           <>
             <div className="flex gap-2">
               <Button
-                onClick={() => setBuysellFilter('sell')}
+                onClick={() => {
+                  setBuysellFilter('sell');
+                  setBuysellType('all');
+                }}
                 variant={buysellFilter === 'sell' ? 'default' : 'outline'}
                 className={`rounded-full whitespace-nowrap ${
                   buysellFilter === 'sell'
@@ -213,7 +224,10 @@ export function ListingsTab() {
                 Продам
               </Button>
               <Button
-                onClick={() => setBuysellFilter('buy')}
+                onClick={() => {
+                  setBuysellFilter('buy');
+                  setBuysellType('all');
+                }}
                 variant={buysellFilter === 'buy' ? 'default' : 'outline'}
                 className={`rounded-full whitespace-nowrap ${
                   buysellFilter === 'buy'
@@ -409,12 +423,16 @@ export function ListingsTab() {
           <div className="text-center py-12 text-muted-foreground">
             <p>Загрузка объявлений...</p>
           </div>
-        ) : filteredListings.length === 0 ? (
+        ) : error ? (
+          <div className="text-center py-12 text-destructive">
+            <p>{error}</p>
+          </div>
+        ) : listings.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <p>Объявления не найдены</p>
           </div>
         ) : (
-          filteredListings.map((listing) => (
+          listings.map((listing) => (
             <ListingCard key={listing.id} listing={listing} />
           ))
         )}

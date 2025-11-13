@@ -1,17 +1,8 @@
 import { useState, useEffect } from 'react';
-import { ListingCard } from './ListingCard';
+import { ListingCard, MANAGER_LINK, type ListingCardData } from './ListingCard';
 import { Button } from './ui/button';
 import { User, Moon, Sun } from 'lucide-react';
-
-interface Listing {
-  id: number;
-  image: string;
-  title: string;
-  description: string;
-  username: string;
-  isPremium: boolean;
-  category: string;
-}
+import { apiFetch } from '../utils/telegram';
 
 interface ProfileTabProps {
   isDark: boolean;
@@ -19,12 +10,28 @@ interface ProfileTabProps {
 }
 
 export function ProfileTab({ isDark, toggleTheme }: ProfileTabProps) {
-  const [listings, setListings] = useState<Listing[]>([]);
+  const [listings, setListings] = useState<ListingCardData[]>([]);
   const [loading, setLoading] = useState(true);
   const [userId] = useState<string | null>(() => {
-    // Get user_id from URL params or localStorage
+    // Try to get user_id from Telegram WebApp first
+    const tg = (window as any).Telegram?.WebApp;
+    console.log('ProfileTab: проверка Telegram WebApp', { 
+      hasTelegram: !!(window as any).Telegram, 
+      hasWebApp: !!tg,
+      hasUser: !!tg?.initDataUnsafe?.user,
+      userId: tg?.initDataUnsafe?.user?.id 
+    });
+    if (tg?.initDataUnsafe?.user?.id) {
+      const id = String(tg.initDataUnsafe.user.id);
+      console.log('ProfileTab: userId получен из Telegram WebApp:', id);
+      return id;
+    }
+    // Fallback to URL params or localStorage
     const params = new URLSearchParams(window.location.search);
-    return params.get('user_id') || localStorage.getItem('user_id');
+    const urlUserId = params.get('user_id');
+    const localUserId = localStorage.getItem('user_id');
+    console.log('ProfileTab: userId из URL или localStorage', { urlUserId, localUserId });
+    return urlUserId || localUserId;
   });
 
   useEffect(() => {
@@ -36,21 +43,31 @@ export function ProfileTab({ isDark, toggleTheme }: ProfileTabProps) {
   }, [userId]);
 
   const fetchMyAds = async () => {
-    if (!userId) return;
+    if (!userId) {
+      console.log('ProfileTab: userId не найден, пропускаем запрос');
+      return;
+    }
     
+    console.log('ProfileTab: запрос объявлений для user_id=', userId);
     setLoading(true);
     try {
-      const response = await fetch(`/api/myads?user_id=${userId}`);
+      const response = await apiFetch(`/api/myads?user_id=${userId}`);
+      console.log('ProfileTab: получен ответ', response.status, response.statusText);
       const data = await response.json();
+      console.log('ProfileTab: получено объявлений', data.length);
       
-      const transformedListings = data.map((ad: any) => ({
+      const transformedListings: ListingCardData[] = data.map((ad: any) => ({
         id: ad.id,
-        image: ad.photo_id || 'https://via.placeholder.com/800x450?text=No+Image',
         title: ad.title,
         description: ad.desc,
         username: `@${ad.username}`,
         isPremium: ad.is_premium,
         category: ad.category,
+        mode: ad.mode,
+        tag: ad.tag,
+        status: (ad.status ?? 'active') as 'active' | 'expired' | 'inactive',
+        expiresAt: ad.expires_at,
+        photoUrl: ad.photo_url ?? null,
       }));
       
       setListings(transformedListings);
@@ -83,7 +100,7 @@ export function ProfileTab({ isDark, toggleTheme }: ProfileTabProps) {
       </div>
 
       {/* No Listings State */}
-      {!hasListings && (
+      {!loading && !hasListings && (
         <div className="flex flex-col items-center justify-center py-16 space-y-6">
           <div className="w-24 h-24 bg-muted rounded-full flex items-center justify-center">
             <User size={48} className="text-muted-foreground" />
@@ -91,13 +108,18 @@ export function ProfileTab({ isDark, toggleTheme }: ProfileTabProps) {
           
           <div className="text-center space-y-2">
             <p className="text-muted-foreground">У вас нет объявлений</p>
-            <p className="text-muted-foreground/60 text-sm">Создайте своё первое объявление</p>
+            <p className="text-muted-foreground/60 text-sm">
+              Свяжитесь с менеджером, чтобы разместить своё первое объявление
+            </p>
           </div>
 
           <Button
+            asChild
             className="bg-[#FF0000] hover:bg-[#CC0000] text-white px-8 py-6 rounded-2xl shadow-lg"
           >
-            Обратитесь к менеджеру
+            <a href={MANAGER_LINK} target="_blank" rel="noopener noreferrer">
+              Обратитесь к менеджеру
+            </a>
           </Button>
         </div>
       )}
@@ -112,16 +134,45 @@ export function ProfileTab({ isDark, toggleTheme }: ProfileTabProps) {
           <div className="flex items-center justify-between">
             <p className="text-muted-foreground">Мои объявления</p>
             <Button
+              asChild
               className="bg-[#FF0000] hover:bg-[#CC0000] text-white rounded-xl"
               size="sm"
             >
-              Создать
+              <a href={MANAGER_LINK} target="_blank" rel="noopener noreferrer">
+                Обратиться к менеджеру
+              </a>
             </Button>
           </div>
           
-          {listings.map((listing) => (
-            <ListingCard key={listing.id} listing={listing} />
-          ))}
+          {listings.map((listing) => {
+            const isExpired = listing.status === 'expired';
+            const isInactive = listing.status === 'inactive';
+
+            return (
+              <ListingCard
+                key={listing.id}
+                listing={listing}
+                showExpiryDate={true}
+                footer={
+                  (isExpired || isInactive) && (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-sm text-muted-foreground">
+                        Объявление не показывается на бирже. Свяжитесь с менеджером, чтобы поднять его вновь.
+                      </p>
+                      <Button
+                        asChild
+                        className="bg-[#FF0000] hover:bg-[#CC0000] text-white"
+                      >
+                        <a href={MANAGER_LINK} target="_blank" rel="noopener noreferrer">
+                          Обратитесь к менеджеру
+                        </a>
+                      </Button>
+                    </div>
+                  )
+                }
+              />
+            );
+          })}
         </div>
       ) : null}
     </div>
